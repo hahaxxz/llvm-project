@@ -219,6 +219,22 @@ def SIFIVE_U74 : RISCVProcessorModel<"sifive-u74",
                                       FeatureStdExtC],
                                      SiFive7TuneFeatures>;
 
+defvar CHUXIN1BTuneFeatures = [TuneCHUXIN1B, TuneNoDefaultUnroll,
+                              TuneShortForwardBranchOpt,
+                              FeaturePostRAScheduler];
+
+def CHUXIN_1B : RISCVProcessorModel<"chuxin-1b",
+                                     CHUXIN1BModel,
+                                     [Feature64Bit,
+                                      FeatureStdExtI,
+                                      FeatureStdExtZifencei,
+                                      FeatureStdExtM,
+                                      FeatureStdExtA,
+                                      FeatureStdExtF,
+                                      FeatureStdExtD,
+                                      FeatureStdExtV],
+                                     CHUXIN1BTuneFeatures>;
+
 defvar SiFiveX280TuneFeatures = !listconcat(SiFive7TuneFeatures,
                                             [TuneDLenFactor2,
                                              TuneOptimizedZeroStrideLoad]);

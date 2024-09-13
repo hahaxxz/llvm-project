@@ -65,6 +65,7 @@ public:
   enum RISCVProcFamilyEnum : uint8_t {
     Others,
     SiFive7,
+    CHUXIN,
     VentanaVeyron,
   };
   // clang-format on

@@ -1405,6 +1405,9 @@ def NoConditionalMoveFusion  : Predicate<"!Subtarget->hasConditionalMoveFusion()
 def TuneSiFive7 : SubtargetFeature<"sifive7", "RISCVProcFamily", "SiFive7",
                                    "SiFive 7-Series processors">;
 
+def TuneCHUXIN1B : SubtargetFeature<"chuxin-1b", "RISCVProcFamily", "CHUXIN",
+                                   "CHUXIN-Series processors">;
+
 def TuneVentanaVeyron : SubtargetFeature<"ventana-veyron", "RISCVProcFamily", "VentanaVeyron",
                                          "Ventana Veyron-Series processors">;
 
