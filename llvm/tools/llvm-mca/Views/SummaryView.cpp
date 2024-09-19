@@ -67,8 +67,9 @@ void SummaryView::printView(raw_ostream &OS) const {
   DisplayValues DV;
 
   collectData(DV);
-  TempStream << "Iterations:        " << DV.Iterations;
-  TempStream << "\nInstructions:      " << DV.TotalInstructions;
+  TempStream << "Instructions:      " << DV.Instructions;
+  TempStream << "\nIterations:        " << DV.Iterations;
+  TempStream << "\nTotal Insts:       " << DV.TotalInstructions;
   TempStream << "\nTotal Cycles:      " << DV.TotalCycles;
   TempStream << "\nTotal uOps:        " << DV.TotalUOps << '\n';
   TempStream << "\nDispatch Width:    " << DV.DispatchWidth;
@@ -76,6 +77,8 @@ void SummaryView::printView(raw_ostream &OS) const {
              << format("%.2f", floor((DV.UOpsPerCycle * 100) + 0.5) / 100);
   TempStream << "\nIPC:               "
              << format("%.2f", floor((DV.IPC * 100) + 0.5) / 100);
+  TempStream << "\nCycles Per Block:  "
+             << format("%.2f", floor((DV.Instructions / DV.IPC) * 100 + 0.5) / 100);
   TempStream << "\nBlock RThroughput: "
              << format("%.1f", floor((DV.BlockRThroughput * 10) + 0.5) / 10)
              << '\n';
