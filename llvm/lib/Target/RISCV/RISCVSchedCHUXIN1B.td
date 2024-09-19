@@ -179,14 +179,6 @@ class CHUXIN1BAnyToGPRBypass<SchedRead read, int cycles = 2>
     : ReadAdvance<read, cycles, [WriteIALU, WriteIALU32,
                                  WriteShiftImm, WriteShiftImm32,
                                  WriteShiftReg, WriteShiftReg32,
-                                 WriteSHXADD, WriteSHXADD32,
-                                 WriteRotateImm, WriteRotateImm32,
-                                 WriteRotateReg, WriteRotateReg32,
-                                 WriteSingleBit, WriteSingleBitImm,
-                                 WriteBEXT, WriteBEXTI,
-                                 WriteCLZ, WriteCLZ32, WriteCTZ, WriteCTZ32,
-                                 WriteCPOP, WriteCPOP32,
-                                 WriteREV8, WriteORCB, WriteIMinMax, WriteSFB,
                                  WriteIMul, WriteIMul32,
                                  WriteIDiv, WriteIDiv32,
                                  WriteIRem, WriteIRem32,
@@ -195,15 +187,16 @@ class CHUXIN1BAnyToGPRBypass<SchedRead read, int cycles = 2>
 // CHUXIN1B machine model for scheduling and other instruction cost heuristics.
 def CHUXIN1BModel : SchedMachineModel {
   let MicroOpBufferSize = 0; // Explicitly set to zero since CHUXIN1B is in-order.
-  let IssueWidth = 2;        // 2 micro-ops are dispatched per cycle.
-  let LoadLatency = 3;
-  let MispredictPenalty = 3;
+  let IssueWidth = 1;        // 1 micro-op is dispatched per cycle.
+  let LoadLatency = 5;       // 5 cycles for load if L1 cache hit.
+  let MispredictPenalty = 13;// 13 cycles for branch misprediction.
   let CompleteModel = 0;
   let EnableIntervals = true;
-  let UnsupportedFeatures = [HasStdExtZbkb, HasStdExtZbkc, HasStdExtZbkx,
+  let UnsupportedFeatures = [HasStdExtZbbOrZbkb, HasStdExtZbkb, HasStdExtZbkc, HasStdExtZbkx,
                              HasStdExtZcmt, HasStdExtZknd, HasStdExtZkne,
                              HasStdExtZknh, HasStdExtZksed, HasStdExtZksh,
-                             HasStdExtZkr];
+                             HasStdExtZfh,
+                             HasStdExtZkr, HasStdExtZbs];
 }
 
 // The CHUXIN1B microarchitecture has three pipelines: A, B, V.
@@ -215,6 +208,7 @@ let SchedModel = CHUXIN1BModel in {
 let BufferSize = 0 in {
 def CHUXIN1BPipeA       : ProcResource<1>;
 def CHUXIN1BPipeB       : ProcResource<1>;
+def CHUXIN1BIMul        : ProcResource<1>; // Int Multiply
 def CHUXIN1BIDiv        : ProcResource<1>; // Int Division
 def CHUXIN1BFDiv        : ProcResource<1>; // FP Division/Sqrt
 def CHUXIN1BVA          : ProcResource<1>; // Arithmetic sequencer
@@ -234,21 +228,33 @@ def CHUXIN1BVCQ         : ProcResource<1>; // Vector Command Queue
 
 def CHUXIN1BPipeAB : ProcResGroup<[CHUXIN1BPipeA, CHUXIN1BPipeB]>;
 
-// Branching
-let Latency = 3 in {
-def : WriteRes<WriteJmp, [CHUXIN1BPipeB]>;
+class CHUXIN1BUOPWriteRes<SchedWrite write, int cycles = 16> // micro-op sequencer
+    : WriteRes<write, [CHUXIN1BPipeA, CHUXIN1BPipeB, CHUXIN1BIDiv, 
+                       CHUXIN1BFDiv, CHUXIN1BVA, CHUXIN1BVL, 
+                       CHUXIN1BVS, CHUXIN1BVCQ]>
+                       {let Latency = cycles;
+                       let ReleaseAtCycles = [cycles, cycles, cycles,
+                                              cycles, cycles, cycles,
+                                              cycles, cycles];}
+// CHUXIN-1B CSR
+def : WriteRes<WriteCSR, [CHUXIN1BPipeB]>{
+  let Latency = 5;
+}
+
+// CHUXIN-1B Jump and link
+let Latency = 6 in {
 def : WriteRes<WriteJal, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteJalr, [CHUXIN1BPipeB]>;
 }
 
-//Short forward branch
-def : WriteRes<WriteSFB, [CHUXIN1BPipeA, CHUXIN1BPipeB]> {
-  let Latency = 3;
-  let NumMicroOps = 2;
+// CHUXIN-1B Branching
+def : WriteRes<WriteJmp, [CHUXIN1BPipeB]> {
+  let Latency = 1;
 }
 
 // Integer arithmetic and logic
-let Latency = 3 in {
+// TODO: latency of and & andi instructions is 1, not 2
+let Latency = 2 in {
 def : WriteRes<WriteIALU, [CHUXIN1BPipeAB]>;
 def : WriteRes<WriteIALU32, [CHUXIN1BPipeAB]>;
 def : WriteRes<WriteShiftImm, [CHUXIN1BPipeAB]>;
@@ -257,192 +263,120 @@ def : WriteRes<WriteShiftReg, [CHUXIN1BPipeAB]>;
 def : WriteRes<WriteShiftReg32, [CHUXIN1BPipeAB]>;
 }
 
-// Integer multiplication
-let Latency = 3 in {
-def : WriteRes<WriteIMul, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteIMul32, [CHUXIN1BPipeB]>;
+// CHUXIN-1B Integer multiplication
+
+def : WriteRes<WriteIMul, [CHUXIN1BPipeB, CHUXIN1BIMul]>{
+  let Latency = 8;
+  let ReleaseAtCycles = [1, 7];
+}
+def : WriteRes<WriteIMul32, [CHUXIN1BPipeB, CHUXIN1BIMul]>{
+  let Latency = 8;
+  let ReleaseAtCycles = [1, 7];
 }
 
-// Integer division
+// CHUXIN-1B Integer division
 def : WriteRes<WriteIDiv, [CHUXIN1BPipeB, CHUXIN1BIDiv]> {
-  let Latency = 66;
-  let ReleaseAtCycles = [1, 65];
+  let Latency = 71;
+  let ReleaseAtCycles = [1, 70];
 }
 def : WriteRes<WriteIDiv32,  [CHUXIN1BPipeB, CHUXIN1BIDiv]> {
-  let Latency = 34;
-  let ReleaseAtCycles = [1, 33];
+  let Latency = 39;
+  let ReleaseAtCycles = [1, 38];
 }
 
-// Integer remainder
-def : WriteRes<WriteIRem, [CHUXIN1BPipeB, CHUXIN1BIDiv]> {
-  let Latency = 66;
-  let ReleaseAtCycles = [1, 65];
-}
-def : WriteRes<WriteIRem32,  [CHUXIN1BPipeB, CHUXIN1BIDiv]> {
-  let Latency = 34;
-  let ReleaseAtCycles = [1, 33];
-}
-
-// Bitmanip
-let Latency = 3 in {
-// Rotates are in the late-B ALU.
-def : WriteRes<WriteRotateImm, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteRotateImm32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteRotateReg, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteRotateReg32, [CHUXIN1BPipeB]>;
-
-// clz[w]/ctz[w] are in the late-B ALU.
-def : WriteRes<WriteCLZ, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteCLZ32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteCTZ, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteCTZ32, [CHUXIN1BPipeB]>;
-
-// cpop[w] look exactly like multiply.
-def : WriteRes<WriteCPOP, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteCPOP32, [CHUXIN1BPipeB]>;
-
-// orc.b is in the late-B ALU.
-def : WriteRes<WriteORCB, [CHUXIN1BPipeB]>;
-
-// min/max are in the late-B ALU
-def : WriteRes<WriteIMinMax, [CHUXIN1BPipeB]>;
-
-// rev8 is in the late-A and late-B ALUs.
-def : WriteRes<WriteREV8, [CHUXIN1BPipeAB]>;
-
-// shNadd[.uw] is on the early-B and late-B ALUs.
-def : WriteRes<WriteSHXADD, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteSHXADD32, [CHUXIN1BPipeB]>;
-}
-
-// Single-bit instructions
-// BEXT[I] instruction is available on all ALUs and the other instructions
-// are only available on the CHUXIN1BB pipe.
-let Latency = 3 in {
-def : WriteRes<WriteSingleBit, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteSingleBitImm, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteBEXT, [CHUXIN1BPipeAB]>;
-def : WriteRes<WriteBEXTI, [CHUXIN1BPipeAB]>;
-}
 
 // Memory
+
+let Latency = 3 in {
 def : WriteRes<WriteSTB, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteSTH, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteSTW, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteSTD, [CHUXIN1BPipeA]>;
-def : WriteRes<WriteFST16, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteFST32, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteFST64, [CHUXIN1BPipeA]>;
+}
 
-let Latency = 3 in {
+// CHUXIN-1B load
+let Latency = 6 in {
 def : WriteRes<WriteLDB, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteLDH, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteLDW, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteLDD, [CHUXIN1BPipeA]>;
 }
 
-let Latency = 2 in {
-def : WriteRes<WriteFLD16, [CHUXIN1BPipeA]>;
+// CHUXIN-1B floating-point load
+let Latency = 6 in {
 def : WriteRes<WriteFLD32, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteFLD64, [CHUXIN1BPipeA]>;
 }
 
-// Atomic memory
-def : WriteRes<WriteAtomicSTW, [CHUXIN1BPipeA]>;
-def : WriteRes<WriteAtomicSTD, [CHUXIN1BPipeA]>;
-
+// CHUXIN-1B general floating-point
 let Latency = 3 in {
-def : WriteRes<WriteAtomicW, [CHUXIN1BPipeA]>;
-def : WriteRes<WriteAtomicD, [CHUXIN1BPipeA]>;
-def : WriteRes<WriteAtomicLDW, [CHUXIN1BPipeA]>;
-def : WriteRes<WriteAtomicLDD, [CHUXIN1BPipeA]>;
+def : WriteRes<WriteFCmp32, [CHUXIN1BPipeB]>;
+def : WriteRes<WriteFCmp64, [CHUXIN1BPipeB]>;
 }
-
-// Half precision.
-let Latency = 5 in {
-def : WriteRes<WriteFAdd16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMul16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMA16, [CHUXIN1BPipeB]>;
-}
-let Latency = 3 in {
-def : WriteRes<WriteFSGNJ16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMinMax16, [CHUXIN1BPipeB]>;
-}
-
-let Latency = 14, ReleaseAtCycles = [1, 13] in {
-def :  WriteRes<WriteFDiv16, [CHUXIN1BPipeB, CHUXIN1BFDiv]>;
-def :  WriteRes<WriteFSqrt16, [CHUXIN1BPipeB, CHUXIN1BFDiv]>;
-}
-
-// Single precision.
-let Latency = 5 in {
+let Latency = 6 in {
+// Single precision
 def : WriteRes<WriteFAdd32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMul32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMA32, [CHUXIN1BPipeB]>;
-}
-let Latency = 3 in {
+def : WriteRes<WriteFClass32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFSGNJ32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMinMax32, [CHUXIN1BPipeB]>;
-}
-
-def : WriteRes<WriteFDiv32, [CHUXIN1BPipeB, CHUXIN1BFDiv]> { let Latency = 27;
-                                                         let ReleaseAtCycles = [1, 26]; }
-def : WriteRes<WriteFSqrt32, [CHUXIN1BPipeB, CHUXIN1BFDiv]> { let Latency = 27;
-                                                          let ReleaseAtCycles = [1, 26]; }
-
 // Double precision
-let Latency = 7 in {
 def : WriteRes<WriteFAdd64, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMul64, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMA64, [CHUXIN1BPipeB]>;
-}
-let Latency = 3 in {
-def : WriteRes<WriteFSGNJ64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMinMax64, [CHUXIN1BPipeB]>;
-}
-
-def : WriteRes<WriteFDiv64, [CHUXIN1BPipeB, CHUXIN1BFDiv]> { let Latency = 56;
-                                                         let ReleaseAtCycles = [1, 55]; }
-def : WriteRes<WriteFSqrt64, [CHUXIN1BPipeB, CHUXIN1BFDiv]> { let Latency = 56;
-                                                          let ReleaseAtCycles = [1, 55]; }
-
-// Conversions
-let Latency = 3 in {
-def : WriteRes<WriteFCvtI32ToF16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtI32ToF32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtI32ToF64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtI64ToF16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtI64ToF32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtI64ToF64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF16ToI32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF16ToI64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF16ToF32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF16ToF64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF32ToI32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF32ToI64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF32ToF16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF32ToF64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF64ToI32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF64ToI64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF64ToF16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCvtF64ToF32, [CHUXIN1BPipeB]>;
-
-def : WriteRes<WriteFClass16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFClass32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFClass64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCmp16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCmp32, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFCmp64, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMovI16ToF16, [CHUXIN1BPipeB]>;
-def : WriteRes<WriteFMovF16ToI16, [CHUXIN1BPipeB]>;
+def : WriteRes<WriteFSGNJ64, [CHUXIN1BPipeB]>;
+// Floating-point integer move
 def : WriteRes<WriteFMovI32ToF32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMovF32ToI32, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMovI64ToF64, [CHUXIN1BPipeB]>;
 def : WriteRes<WriteFMovF64ToI64, [CHUXIN1BPipeB]>;
 }
 
+// CHUXIN-1B uOPS instructions.
+// Floating-point division and sqrt
+def : CHUXIN1BUOPWriteRes<WriteFDiv32, 52>;
+def : CHUXIN1BUOPWriteRes<WriteFDiv64, 65>;
+def : CHUXIN1BUOPWriteRes<WriteFSqrt32, 58>;
+def : CHUXIN1BUOPWriteRes<WriteFSqrt64, 70>;
+// Floating-point min and max
+def : CHUXIN1BUOPWriteRes<WriteFMinMax64, 55>;
+def : CHUXIN1BUOPWriteRes<WriteFMinMax32, 55>;
+// Integer remainder
+def : CHUXIN1BUOPWriteRes<WriteIRem, 78>;
+def : CHUXIN1BUOPWriteRes<WriteIRem32, 45>;
+
+
+
+// CHUXIN-1B Conversions
+def : CHUXIN1BUOPWriteRes<WriteFCvtF32ToI32, 30>; // fcvt.w(u).s
+def : CHUXIN1BUOPWriteRes<WriteFCvtF32ToI64, 30>; // fcvt.l(u).d
+let Latency = 6 in {
+def : WriteRes<WriteFCvtF64ToF32, [CHUXIN1BPipeB]>; // fcvt.s.d
+def : WriteRes<WriteFCvtF32ToF64, [CHUXIN1BPipeB]>; // fcvt.d.s
+}
+def : CHUXIN1BUOPWriteRes<WriteFCvtI32ToF32, 34>; // fcvt.s.w(u)
+def : CHUXIN1BUOPWriteRes<WriteFCvtI32ToF64, 34>; // fcvt.d.w(u)
+
+def : CHUXIN1BUOPWriteRes<WriteFCvtI64ToF32, 30>; // fcvt.s.l(u)
+def : CHUXIN1BUOPWriteRes<WriteFCvtI64ToF64, 30>; // fcvt.d.l(u)
+
+def : CHUXIN1BUOPWriteRes<WriteFCvtF64ToI32, 36>; // fcvt.w(u).d
+def : CHUXIN1BUOPWriteRes<WriteFCvtF64ToI64, 36>; // fcvt.l(u).d
+
+// Atomic memory
+// TODO:
+def : CHUXIN1BUOPWriteRes<WriteAtomicSTW, 16>;
+def : CHUXIN1BUOPWriteRes<WriteAtomicSTD, 16>;
+def : CHUXIN1BUOPWriteRes<WriteAtomicW, 16>;
+def : CHUXIN1BUOPWriteRes<WriteAtomicD, 16>;
+def : CHUXIN1BUOPWriteRes<WriteAtomicLDW, 16>;
+def : CHUXIN1BUOPWriteRes<WriteAtomicLDD, 16>;
+
 // 6. Configuration-Setting Instructions
-let Latency = 3 in {
+let Latency = 5 in {
 def : WriteRes<WriteVSETVLI, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteVSETIVLI, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteVSETVL, [CHUXIN1BPipeA]>;
@@ -952,7 +886,7 @@ let Latency = 4, AcquireAtCycles = [0, 1], ReleaseAtCycles = [1, !add(1, 16)] in
   def : WriteRes<WriteVMov8V,     [CHUXIN1BVCQ, CHUXIN1BVA]>;
 
 // Others
-def : WriteRes<WriteCSR, [CHUXIN1BPipeB]>;
+//Short forward branch
 def : WriteRes<WriteNop, []>;
 let Latency = 3 in
   def : WriteRes<WriteRdVLENB, [CHUXIN1BPipeB]>;
@@ -1018,12 +952,18 @@ def : CHUXIN1BAnyToGPRBypass<ReadJalr>;
 def : ReadAdvance<ReadCSR, 0>;
 def : CHUXIN1BAnyToGPRBypass<ReadStoreData>;
 def : ReadAdvance<ReadMemBase, 0>;
-def : CHUXIN1BAnyToGPRBypass<ReadIALU>;
-def : CHUXIN1BAnyToGPRBypass<ReadIALU32>;
-def : CHUXIN1BAnyToGPRBypass<ReadShiftImm>;
-def : CHUXIN1BAnyToGPRBypass<ReadShiftImm32>;
-def : CHUXIN1BAnyToGPRBypass<ReadShiftReg>;
-def : CHUXIN1BAnyToGPRBypass<ReadShiftReg32>;
+def : ReadAdvance<ReadIALU, 0>;
+def : ReadAdvance<ReadIALU32, 0>;
+def : ReadAdvance<ReadShiftImm, 0>;
+def : ReadAdvance<ReadShiftImm32, 0>;
+def : ReadAdvance<ReadShiftReg, 0>;
+def : ReadAdvance<ReadShiftReg32, 0>;
+// def : CHUXIN1BAnyToGPRBypass<ReadIALU>;
+// def : CHUXIN1BAnyToGPRBypass<ReadIALU32>;
+// def : CHUXIN1BAnyToGPRBypass<ReadShiftImm>;
+// def : CHUXIN1BAnyToGPRBypass<ReadShiftImm32>;
+// def : CHUXIN1BAnyToGPRBypass<ReadShiftReg>;
+// def : CHUXIN1BAnyToGPRBypass<ReadShiftReg32>;
 def : ReadAdvance<ReadIDiv, 0>;
 def : ReadAdvance<ReadIDiv32, 0>;
 def : ReadAdvance<ReadIRem, 0>;
@@ -1040,83 +980,40 @@ def : ReadAdvance<ReadAtomicSTW, 0>;
 def : ReadAdvance<ReadAtomicSTD, 0>;
 def : ReadAdvance<ReadFStoreData, 0>;
 def : ReadAdvance<ReadFMemBase, 0>;
-def : ReadAdvance<ReadFAdd16, 0>;
 def : ReadAdvance<ReadFAdd32, 0>;
 def : ReadAdvance<ReadFAdd64, 0>;
-def : ReadAdvance<ReadFMul16, 0>;
-def : ReadAdvance<ReadFMA16, 0>;
-def : ReadAdvance<ReadFMA16Addend, 0>;
 def : ReadAdvance<ReadFMul32, 0>;
 def : ReadAdvance<ReadFMul64, 0>;
 def : ReadAdvance<ReadFMA32, 0>;
 def : ReadAdvance<ReadFMA32Addend, 0>;
 def : ReadAdvance<ReadFMA64, 0>;
 def : ReadAdvance<ReadFMA64Addend, 0>;
-def : ReadAdvance<ReadFDiv16, 0>;
 def : ReadAdvance<ReadFDiv32, 0>;
 def : ReadAdvance<ReadFDiv64, 0>;
-def : ReadAdvance<ReadFSqrt16, 0>;
 def : ReadAdvance<ReadFSqrt32, 0>;
 def : ReadAdvance<ReadFSqrt64, 0>;
-def : ReadAdvance<ReadFCmp16, 0>;
 def : ReadAdvance<ReadFCmp32, 0>;
 def : ReadAdvance<ReadFCmp64, 0>;
-def : ReadAdvance<ReadFSGNJ16, 0>;
 def : ReadAdvance<ReadFSGNJ32, 0>;
 def : ReadAdvance<ReadFSGNJ64, 0>;
-def : ReadAdvance<ReadFMinMax16, 0>;
 def : ReadAdvance<ReadFMinMax32, 0>;
 def : ReadAdvance<ReadFMinMax64, 0>;
-def : ReadAdvance<ReadFCvtF16ToI32, 0>;
-def : ReadAdvance<ReadFCvtF16ToI64, 0>;
 def : ReadAdvance<ReadFCvtF32ToI32, 0>;
 def : ReadAdvance<ReadFCvtF32ToI64, 0>;
 def : ReadAdvance<ReadFCvtF64ToI32, 0>;
 def : ReadAdvance<ReadFCvtF64ToI64, 0>;
-def : ReadAdvance<ReadFCvtI32ToF16, 0>;
 def : ReadAdvance<ReadFCvtI32ToF32, 0>;
 def : ReadAdvance<ReadFCvtI32ToF64, 0>;
-def : ReadAdvance<ReadFCvtI64ToF16, 0>;
 def : ReadAdvance<ReadFCvtI64ToF32, 0>;
 def : ReadAdvance<ReadFCvtI64ToF64, 0>;
 def : ReadAdvance<ReadFCvtF32ToF64, 0>;
 def : ReadAdvance<ReadFCvtF64ToF32, 0>;
-def : ReadAdvance<ReadFCvtF16ToF32, 0>;
-def : ReadAdvance<ReadFCvtF32ToF16, 0>;
-def : ReadAdvance<ReadFCvtF16ToF64, 0>;
-def : ReadAdvance<ReadFCvtF64ToF16, 0>;
-def : ReadAdvance<ReadFMovF16ToI16, 0>;
-def : ReadAdvance<ReadFMovI16ToF16, 0>;
 def : ReadAdvance<ReadFMovF32ToI32, 0>;
 def : ReadAdvance<ReadFMovI32ToF32, 0>;
 def : ReadAdvance<ReadFMovF64ToI64, 0>;
 def : ReadAdvance<ReadFMovI64ToF64, 0>;
-def : ReadAdvance<ReadFClass16, 0>;
 def : ReadAdvance<ReadFClass32, 0>;
 def : ReadAdvance<ReadFClass64, 0>;
-
-def : CHUXIN1BAnyToGPRBypass<ReadSFBJmp, 0>;
-def : CHUXIN1BAnyToGPRBypass<ReadSFBALU, 0>;
-
-// Bitmanip
-def : CHUXIN1BAnyToGPRBypass<ReadRotateImm>;
-def : CHUXIN1BAnyToGPRBypass<ReadRotateImm32>;
-def : CHUXIN1BAnyToGPRBypass<ReadRotateReg>;
-def : CHUXIN1BAnyToGPRBypass<ReadRotateReg32>;
-def : CHUXIN1BAnyToGPRBypass<ReadCLZ>;
-def : CHUXIN1BAnyToGPRBypass<ReadCLZ32>;
-def : CHUXIN1BAnyToGPRBypass<ReadCTZ>;
-def : CHUXIN1BAnyToGPRBypass<ReadCTZ32>;
-def : ReadAdvance<ReadCPOP, 0>;
-def : ReadAdvance<ReadCPOP32, 0>;
-def : CHUXIN1BAnyToGPRBypass<ReadORCB>;
-def : CHUXIN1BAnyToGPRBypass<ReadIMinMax>;
-def : CHUXIN1BAnyToGPRBypass<ReadREV8>;
-def : CHUXIN1BAnyToGPRBypass<ReadSHXADD>;
-def : CHUXIN1BAnyToGPRBypass<ReadSHXADD32>;
-// Single-bit instructions
-def : CHUXIN1BAnyToGPRBypass<ReadSingleBit>;
-def : CHUXIN1BAnyToGPRBypass<ReadSingleBitImm>;
 
 // 6. Configuration-Setting Instructions
 def : ReadAdvance<ReadVSETVLI, 2>;
@@ -1296,9 +1193,14 @@ foreach mx = SchedMxList in {
 //===----------------------------------------------------------------------===//
 // Unsupported extensions
 defm : UnsupportedSchedZabha;
+defm : UnsupportedSchedSFB;
+defm : UnsupportedSchedZbb;
+defm : UnsupportedSchedZba;
+defm : UnsupportedSchedZbs;
 defm : UnsupportedSchedZbc;
 defm : UnsupportedSchedZbkb;
 defm : UnsupportedSchedZbkx;
 defm : UnsupportedSchedZfa;
+defm : UnsupportedSchedZfh;
 defm : UnsupportedSchedZvk;
 }
