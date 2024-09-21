@@ -287,7 +287,7 @@ def : WriteRes<WriteIDiv32,  [CHUXIN1BPipeB, CHUXIN1BIDiv]> {
 
 // Memory
 
-let Latency = 3 in {
+let Latency = 5 in {
 def : WriteRes<WriteSTB, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteSTH, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteSTW, [CHUXIN1BPipeA]>;
@@ -297,7 +297,7 @@ def : WriteRes<WriteFST64, [CHUXIN1BPipeA]>;
 }
 
 // CHUXIN-1B load
-let Latency = 6 in {
+let Latency = 5 in {
 def : WriteRes<WriteLDB, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteLDH, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteLDW, [CHUXIN1BPipeA]>;
@@ -305,7 +305,7 @@ def : WriteRes<WriteLDD, [CHUXIN1BPipeA]>;
 }
 
 // CHUXIN-1B floating-point load
-let Latency = 6 in {
+let Latency = 5 in {
 def : WriteRes<WriteFLD32, [CHUXIN1BPipeA]>;
 def : WriteRes<WriteFLD64, [CHUXIN1BPipeA]>;
 }
